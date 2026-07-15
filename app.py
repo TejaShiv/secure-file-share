@@ -1,51 +1,65 @@
 from flask import Flask, render_template, request, redirect, url_for, session, flash, send_file
 from flask_sqlalchemy import SQLAlchemy
 from werkzeug.security import generate_password_hash, check_password_hash
+from werkzeug.utils import secure_filename
 from flask_socketio import SocketIO, emit
 import os
+import uuid
 import datetime
 import re
 import hashlib
-from cryptography.fernet import Fernet
+from cryptography.fernet import Fernet, InvalidToken
 from io import BytesIO
 from collections import Counter
 from flask_migrate import Migrate
 
-# Initialize the app and configurations
 app = Flask(__name__)
-app.secret_key = "secretkey"
 
-# File paths for cross-platform compatibility
+# SECRET_KEY signs session cookies. A hardcoded/guessable key would let anyone
+# forge a logged-in session for any user, so it must come from the environment.
+# A development fallback keeps `flask run` working locally.
+app.secret_key = os.environ.get("SECRET_KEY", "dev-only-not-for-production")
+
 BASE_DIR = os.path.abspath(os.path.dirname(__file__))
 KEY_PATH = os.path.join(BASE_DIR, "secret.key")
 UPLOAD_FOLDER = os.path.join(BASE_DIR, "uploads")
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
-# Database config
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///' + os.path.join(BASE_DIR, 'file_storage.db')
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # Max file size 16 MB
+app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024
 
-# Initialize database and socket
 db = SQLAlchemy(app)
 migrate = Migrate(app, db)
 socketio = SocketIO(app)
 
-# Encryption Key
-if not os.path.exists(KEY_PATH):
-    with open(KEY_PATH, "wb") as key_file:
-        key_file.write(Fernet.generate_key())
-with open(KEY_PATH, "rb") as key_file:
-    ENCRYPTION_KEY = key_file.read()
+# Encryption key: prefer the environment; fall back to a local key file in dev.
+_env_key = os.environ.get("ENCRYPTION_KEY")
+if _env_key:
+    ENCRYPTION_KEY = _env_key.encode()
+else:
+    if not os.path.exists(KEY_PATH):
+        with open(KEY_PATH, "wb") as key_file:
+            key_file.write(Fernet.generate_key())
+    with open(KEY_PATH, "rb") as key_file:
+        ENCRYPTION_KEY = key_file.read()
 cipher_suite = Fernet(ENCRYPTION_KEY)
 
-# Online users set
 online_users = set()
 
-# Import models after db is initialized
 from models import User, File, Blockchain
 
-# ------------------ Routes ------------------ #
+
+def safe_storage_name(original_filename):
+    """Collision-free, traversal-safe name to store a file under.
+
+    secure_filename strips path separators and traversal sequences (../); the
+    UUID prefix stops two users' identical filenames from overwriting each
+    other and stops the on-disk name from being used to reach another file.
+    """
+    cleaned = secure_filename(original_filename) or "file"
+    return f"{uuid.uuid4().hex}_{cleaned}"
+
 
 @app.route('/')
 def home():
@@ -54,16 +68,15 @@ def home():
 @app.route('/register', methods=['GET', 'POST'])
 def register():
     if request.method == 'POST':
-        username = request.form.get('username')
-        password = request.form.get('password')
-        if len(password) < 8 or not re.search(r"[A-Za-z]", password) or not re.search(r"\d", password) or not re.search(r"[A-Z]", password):
-            flash("Password must be strong.", 'danger')
+        username = (request.form.get('username') or '').strip()
+        password = request.form.get('password') or ''
+        if len(password) < 8 or not re.search(r"[a-z]", password) or not re.search(r"\d", password) or not re.search(r"[A-Z]", password):
+            flash("Password must be at least 8 characters and include upper, lower, and a number.", 'danger')
             return redirect(url_for('register'))
         if User.query.filter_by(username=username).first():
             flash("Username already taken.", 'danger')
             return redirect(url_for('register'))
-        new_user = User(username=username, password=generate_password_hash(password))
-        db.session.add(new_user)
+        db.session.add(User(username=username, password=generate_password_hash(password)))
         db.session.commit()
         flash("Registration successful!", 'success')
         return redirect(url_for('login'))
@@ -73,8 +86,8 @@ def register():
 def login():
     lock_time_remaining = None
     if request.method == 'POST':
-        username = request.form.get('username')
-        password = request.form.get('password')
+        username = (request.form.get('username') or '').strip()
+        password = request.form.get('password') or ''
         user = User.query.filter_by(username=username).first()
         if user:
             if user.lock_time and datetime.datetime.utcnow() < user.lock_time:
@@ -85,6 +98,7 @@ def login():
                 user.failed_attempts = 0
                 user.lock_time = None
                 db.session.commit()
+                session.clear()
                 session['username'] = username
                 session['user_id'] = user.id
                 return redirect(url_for('dashboard'))
@@ -92,6 +106,7 @@ def login():
                 user.failed_attempts += 1
                 if user.failed_attempts >= 3:
                     user.lock_time = datetime.datetime.utcnow() + datetime.timedelta(seconds=30)
+                    user.failed_attempts = 0
                     lock_time_remaining = 30
                 db.session.commit()
                 flash("Invalid credentials.", 'danger')
@@ -110,29 +125,20 @@ def logout():
 def dashboard():
     if 'username' not in session:
         return redirect(url_for('login'))
-
-    # Get total users and online users count
     total_users = User.query.count()
     all_users = User.query.all()
     online_set = set(online_users)
-
-    # Get file sharing and file extension statistics
     all_files = Blockchain.query.all()
     total_files_shared = len(all_files)
-
-    # Collect file types (extensions) and count them
     file_extensions = [entry.file_extension.lower() for entry in all_files if entry.file_extension]
     ext_counter = Counter(file_extensions)
-    file_type_labels = list(ext_counter.keys())
-    file_type_counts = list(ext_counter.values())
-
     return render_template('dashboard.html',
                            total_users=total_users,
                            users_list=all_users,
                            online_users=online_set,
                            session_shared_count=total_files_shared,
-                           file_type_labels=file_type_labels,
-                           file_type_counts=file_type_counts)
+                           file_type_labels=list(ext_counter.keys()),
+                           file_type_counts=list(ext_counter.values()))
 
 @app.route('/upload', methods=['GET', 'POST'])
 def upload():
@@ -140,27 +146,50 @@ def upload():
         return redirect(url_for('login'))
     users = User.query.filter(User.username != session['username']).all()
     if request.method == 'POST':
-        file = request.files['file']
-        shared_user_id = request.form.get('shared_with')
-        if file:
-            filename = file.filename
-            ext = filename.split('.')[-1]
-            path = os.path.join(UPLOAD_FOLDER, filename)
-            encrypted = cipher_suite.encrypt(file.read())
-            with open(path, 'wb') as f:
-                f.write(encrypted)
-            file_hash = hashlib.sha256(encrypted).hexdigest()
-            db.session.add(File(filename=filename, user_id=session['user_id'], shared_with_user_id=shared_user_id))
-            shared_user = User.query.get(shared_user_id)
-            if shared_user:
-                db.session.add(Blockchain(sent_by=session['username'], sent_to=shared_user.username,
-                                          filename=filename, file_extension=ext, file_hash=file_hash))
-                db.session.commit()
-                socketio.emit('new_file_shared', {'shared_to': shared_user.username})
-                flash("File uploaded and shared!", 'success')
-                return redirect(url_for('upload'))
-            else:
-                flash("Invalid recipient.", 'danger')
+        file = request.files.get('file')
+        raw_recipient = request.form.get('shared_with')
+
+        if not file or file.filename == '':
+            flash("Please choose a file to upload.", 'danger')
+            return redirect(url_for('upload'))
+
+        # Validate recipient BEFORE writing anything to disk or the DB.
+        try:
+            recipient_id = int(raw_recipient)
+        except (TypeError, ValueError):
+            flash("Please select a valid recipient.", 'danger')
+            return redirect(url_for('upload'))
+        shared_user = User.query.get(recipient_id)
+        if shared_user is None or shared_user.id == session['user_id']:
+            flash("Please select a valid recipient.", 'danger')
+            return redirect(url_for('upload'))
+
+        original_name = file.filename
+        stored_name = safe_storage_name(original_name)
+        ext = original_name.rsplit('.', 1)[-1].lower() if '.' in original_name else ''
+        path = os.path.join(UPLOAD_FOLDER, stored_name)
+        encrypted = cipher_suite.encrypt(file.read())
+        file_hash = hashlib.sha256(encrypted).hexdigest()
+
+        with open(path, 'wb') as f:
+            f.write(encrypted)
+
+        try:
+            db.session.add(File(filename=original_name, stored_name=stored_name,
+                                user_id=session['user_id'], shared_with_user_id=shared_user.id))
+            db.session.add(Blockchain(sent_by=session['username'], sent_to=shared_user.username,
+                                      filename=original_name, file_extension=ext, file_hash=file_hash))
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+            if os.path.exists(path):
+                os.remove(path)
+            flash("Upload failed. Please try again.", 'danger')
+            return redirect(url_for('upload'))
+
+        socketio.emit('new_file_shared', {'shared_to': shared_user.username})
+        flash("File uploaded and shared!", 'success')
+        return redirect(url_for('upload'))
     return render_template('upload.html', users=users)
 
 @app.route('/shared')
@@ -189,19 +218,15 @@ def delete_shared(file_id):
     if 'user_id' not in session:
         flash("Login required.", 'danger')
         return redirect(url_for('login'))
-
     file = File.query.get(file_id)
     if not file or file.shared_with_user_id != session['user_id']:
         flash("You are not authorized to delete this file.", 'danger')
         return redirect(url_for('shared_files'))
-
-    file_path = os.path.join(UPLOAD_FOLDER, file.filename)
+    file_path = os.path.join(UPLOAD_FOLDER, file.stored_name)
     if os.path.exists(file_path):
         os.remove(file_path)
-
     db.session.delete(file)
     db.session.commit()
-
     flash("File removed from your shared list.", 'success')
     return redirect(url_for('shared_files'))
 
@@ -210,25 +235,21 @@ def preview(file_id):
     if 'user_id' not in session:
         flash("Login required.", 'danger')
         return redirect(url_for('login'))
-
     file = File.query.get(file_id)
-    if not file or file.shared_with_user_id != session['user_id']:
+    if not file or (file.shared_with_user_id != session['user_id'] and file.user_id != session['user_id']):
         flash("You are not authorized to preview this file.", 'danger')
         return redirect(url_for('dashboard'))
-
-    file_path = os.path.join(UPLOAD_FOLDER, file.filename)
+    file_path = os.path.join(UPLOAD_FOLDER, file.stored_name)
     if not os.path.exists(file_path):
         flash("File not found.", 'danger')
         return redirect(url_for('dashboard'))
-
     with open(file_path, 'rb') as f:
         encrypted_data = f.read()
     try:
         decrypted_data = cipher_suite.decrypt(encrypted_data)
-    except:
+    except InvalidToken:
         flash("Decryption failed.", 'danger')
         return redirect(url_for('dashboard'))
-
     return send_file(BytesIO(decrypted_data), download_name=file.filename, as_attachment=False)
 
 @app.route('/download/<int:file_id>')
@@ -240,15 +261,14 @@ def download(file_id):
     if not file or (file.user_id != session['user_id'] and file.shared_with_user_id != session['user_id']):
         flash("Unauthorized access.", 'danger')
         return redirect(url_for('dashboard'))
-    with open(os.path.join(UPLOAD_FOLDER, file.filename), 'rb') as f:
+    with open(os.path.join(UPLOAD_FOLDER, file.stored_name), 'rb') as f:
         try:
             data = cipher_suite.decrypt(f.read())
-        except:
+        except InvalidToken:
             flash("Decryption failed.", 'danger')
             return redirect(url_for('dashboard'))
     return send_file(BytesIO(data), download_name=file.filename, as_attachment=True)
 
-# ------------------ Socket Events ------------------ #
 @socketio.on('connect')
 def handle_connect():
     if 'username' in session:
@@ -261,11 +281,5 @@ def handle_disconnect():
         online_users.discard(session['username'])
         socketio.emit('update_online_users', list(online_users), broadcast=True)
 
-# ------------------ Main ------------------ #
 if __name__ == '__main__':
     socketio.run(app, host='0.0.0.0', port=5000)
-
-from models import db
-
-with app.app_context():
-    db.create_all()
