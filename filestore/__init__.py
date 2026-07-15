@@ -46,7 +46,10 @@ def create_app(config_name=None):
 
     db.init_app(app)
     migrate.init_app(app, db)
-    socketio.init_app(app)
+    # Use the dependency-free threading mode under tests so the async server
+    # backend (eventlet) is never imported; it is only needed for the live
+    # production server.
+    socketio.init_app(app, async_mode="threading" if app.config.get("TESTING") else None)
 
     # Attach a ready-to-use encryptor to the app for the file routes.
     app.extensions["encryptor"] = Encryptor(_load_encryption_key(app))

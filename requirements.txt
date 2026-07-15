@@ -5,4 +5,4 @@ Flask-SocketIO==5.3.6
 cryptography==42.0.8
 python-dotenv==1.0.1
 gunicorn==22.0.0
-eventlet==0.36.1
+eventlet>=0.37.0
