@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="upload-container">
+    <h2>Upload File</h2>
+
+    <!-- Display Flash Message -->
+    {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}
+            <div class="alert alert-success">
+                {% for category, message in messages %}
+                    <p>{{ message }}</p>
+                {% endfor %}
+            </div>
+        {% endif %}
+    {% endwith %}
+
+    <form method="POST" enctype="multipart/form-data">
+        <div class="mb-3">
+            <label for="file" class="form-label">Choose a file</label>
+            <input type="file" class="form-control" id="file" name="file" required>
+        </div>
+
+        <div class="mb-3">
+            <label for="shared_with" class="form-label">Share with</label>
+            <select class="form-control" id="shared_with" name="shared_with" required>
+                <option value="" disabled selected>Select User</option>
+                {% for user in users %}
+                    <option value="{{ user.id }}">{{ user.username }}</option>
+                {% endfor %}
+            </select>
+        </div>
+
+        <button type="submit" class="btn btn-primary">Upload and Share</button>
+    </form>
+
+    <div class="back-link">
+        <p><a href="{{ url_for('dashboard') }}">Back to Dashboard</a></p>
+    </div>
+</div>
+{% endblock %}

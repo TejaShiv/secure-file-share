@@ -1,0 +1,6 @@
+<h2>Your Uploaded Files:</h2>
+<ul>
+    {% for file in files %}
+        <li>{{ file.filename }}</li>
+    {% endfor %}
+</ul>

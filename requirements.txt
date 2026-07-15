@@ -1,0 +1,10 @@
+Flask-Migrate==3.1.0
+Flask-Login==0.6.2
+Werkzeug==2.3.7
+Flask
+Flask-SocketIO
+cryptography
+eventlet
+gunicorn
+Flask-SQLAlchemy==2.5.1
+SQLAlchemy==1.4.46

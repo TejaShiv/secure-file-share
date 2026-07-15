@@ -1,0 +1,10 @@
+<table>
+    <tr><th>Index</th><th>Hash</th><th>Timestamp</th></tr>
+    {% for block in blocks %}
+    <tr>
+        <td>{{ block.id }}</td>
+        <td>{{ block.hash }}</td>
+        <td>{{ block.timestamp }}</td>
+    </tr>
+    {% endfor %}
+</table>

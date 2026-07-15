@@ -1,0 +1,5 @@
+<ul>
+    {% for file in files %}
+    <li>{{ file.filename }} (from {{ file.sender.username }})</li>
+    {% endfor %}
+</ul>
