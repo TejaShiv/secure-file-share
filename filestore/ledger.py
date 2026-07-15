@@ -1,7 +1,18 @@
 """Service functions for the tamper-evident transfer ledger."""
+from datetime import datetime, timezone
+
 from .extensions import db
 from .models import TransferLedger
 from .security import GENESIS_PREV_HASH, compute_ledger_hash
+
+
+def _canonical_ts(dt):
+    """Format a datetime for hashing in a way that is stable across a
+    write (timezone-aware) and a later read from SQLite (naive). Both are
+    treated as UTC and rendered identically."""
+    if dt.tzinfo is not None:
+        dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
+    return dt.replace(microsecond=dt.microsecond).isoformat()
 
 
 def latest_entry():
@@ -17,6 +28,10 @@ def append_entry(*, sent_by, sent_to, stored_name, file_extension, content_hash)
     prev = latest_entry()
     prev_hash = prev.entry_hash if prev else GENESIS_PREV_HASH
 
+    # Set the timestamp explicitly so the value we hash is guaranteed to match
+    # the value we persist, independent of when column defaults are applied.
+    ts = datetime.now(timezone.utc)
+
     entry = TransferLedger(
         sent_by=sent_by,
         sent_to=sent_to,
@@ -24,18 +39,16 @@ def append_entry(*, sent_by, sent_to, stored_name, file_extension, content_hash)
         file_extension=file_extension,
         content_hash=content_hash,
         prev_hash=prev_hash,
+        timestamp=ts,
     )
-    # timestamp default is applied on flush; compute a deterministic hash
-    # from the same values we persist.
     db.session.add(entry)
-    db.session.flush()  # populate entry.timestamp without committing
     entry.entry_hash = compute_ledger_hash(
         prev_hash=prev_hash,
         sent_by=sent_by,
         sent_to=sent_to,
         stored_name=stored_name,
         content_hash=content_hash,
-        timestamp_iso=entry.timestamp.isoformat(),
+        timestamp_iso=_canonical_ts(ts),
     )
     return entry
 
@@ -58,7 +71,7 @@ def verify_chain():
             sent_to=entry.sent_to,
             stored_name=entry.stored_name,
             content_hash=entry.content_hash,
-            timestamp_iso=entry.timestamp.isoformat(),
+            timestamp_iso=_canonical_ts(entry.timestamp),
         )
         if recomputed != entry.entry_hash:
             return False, entry.id

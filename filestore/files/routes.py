@@ -82,7 +82,12 @@ def upload():
             flash("Upload failed. Please try again.", "danger")
             return redirect(url_for("files.upload"))
 
-        socketio.emit("new_file_shared", {"shared_to": recipient.username})
+        # Notifying connected clients is best-effort; a socket problem must
+        # not fail an upload that has already been committed.
+        try:
+            socketio.emit("new_file_shared", {"shared_to": recipient.username})
+        except Exception:
+            pass
         flash("File uploaded and shared.", "success")
         return redirect(url_for("files.upload"))
 
