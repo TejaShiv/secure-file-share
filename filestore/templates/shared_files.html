@@ -12,14 +12,14 @@
                 <div class="col-md-6 mb-4">
                     <div class="card bg-dark text-light shadow rounded">
                         <div class="card-body">
-                            <h5 class="card-title">{{ file.filename }}</h5>
-                            <p class="card-text">Shared by: <strong>{{ file.user.username }}</strong></p>
+                            <h5 class="card-title">{{ file.original_name }}</h5>
+                            <p class="card-text">Shared by: <strong>{{ file.owner.username }}</strong></p>
                             <div class="d-flex justify-content-between">
                                 <div>
-                                    <button class="btn btn-secondary me-2" onclick="openPreviewModal('{{ url_for('preview', file_id=file.id) }}', '{{ file.filename }}', '{{ url_for('delete_shared', file_id=file.id) }}')">Preview</button>
-                                    <a href="{{ url_for('download', file_id=file.id) }}" class="btn btn-primary">Download</a>
+                                    <button class="btn btn-secondary me-2" onclick="openPreviewModal('{{ url_for('files.preview', file_id=file.id) }}', '{{ file.original_name }}', '{{ url_for('files.delete_shared', file_id=file.id) }}')">Preview</button>
+                                    <a href="{{ url_for('files.download', file_id=file.id) }}" class="btn btn-primary">Download</a>
                                 </div>
-                                <form action="{{ url_for('delete_shared', file_id=file.id) }}" method="post" onsubmit="return confirm('Are you sure you want to delete this file?');">
+                                <form action="{{ url_for('files.delete_shared', file_id=file.id) }}" method="post" onsubmit="return confirm('Are you sure you want to delete this file?');">
                                     <button type="submit" class="btn btn-outline-danger">Delete</button>
                                 </form>
                             </div>

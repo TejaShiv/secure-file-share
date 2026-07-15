@@ -17,8 +17,12 @@
         <table class="table table-dark table-striped table-hover rounded overflow-hidden shadow">
             <thead>
                 <tr>
-                    <th>#</th><th>Shared By</th><th>Shared With</th>
-                    <th>Filename</th><th>Type</th><th>Content Hash</th><th>Timestamp</th>
+                    <th>#</th>
+                    <th>Shared By</th>
+                    <th>Shared With</th>
+                    <th>Type</th>
+                    <th>Content Hash</th>
+                    <th>Timestamp</th>
                 </tr>
             </thead>
             <tbody>
@@ -27,7 +31,6 @@
                     <td>{{ entry.id }}</td>
                     <td>{{ entry.sent_by }}</td>
                     <td>{{ entry.sent_to }}</td>
-                    <td>{{ entry.filename }}</td>
                     <td>{{ entry.file_extension }}</td>
                     <td title="{{ entry.content_hash }}">{{ entry.content_hash[:12] }}&hellip;</td>
                     <td>{{ entry.timestamp.strftime('%d-%m-%Y %H:%M:%S') }}</td>

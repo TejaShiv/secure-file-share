@@ -31,7 +31,7 @@
         </form>
 
         <div class="text-center mt-3">
-            <p>Don't have an account? <a href="{{ url_for('register') }}" class="text-info">Register here</a></p>
+            <p>Don't have an account? <a href="{{ url_for('auth.register') }}" class="text-info">Register here</a></p>
         </div>
 
         {% if lock_time_remaining is not none %}
