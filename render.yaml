@@ -4,7 +4,11 @@ services:
     env: python
     plan: free
     buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn app:app -w 1 --bind 0.0.0.0:$PORT
+    startCommand: gunicorn --worker-class eventlet -w 1 "run:app" --bind 0.0.0.0:$PORT
     envVars:
-      - key: FLASK_ENV
+      - key: FLASK_CONFIG
         value: production
+      - key: SECRET_KEY
+        generateValue: true
+      - key: ENCRYPTION_KEY
+        sync: false

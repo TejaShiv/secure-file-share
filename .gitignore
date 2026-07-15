@@ -1,7 +1,11 @@
-*.pyc
 __pycache__/
+*.pyc
 instance/
 uploads/
 *.db
 .env
-secret.key
+*.key
+dev_secret.key
+.pytest_cache/
+.venv/
+venv/
