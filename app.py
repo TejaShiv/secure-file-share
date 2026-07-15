@@ -47,7 +47,46 @@ cipher_suite = Fernet(ENCRYPTION_KEY)
 
 online_users = set()
 
-from models import User, File, Blockchain
+from models import User, File, TransferLedger
+
+GENESIS_PREV_HASH = "0" * 64
+
+
+def _compute_ledger_hash(prev_hash, sent_by, sent_to, filename, content_hash, timestamp_iso):
+    """Hash an entry together with the previous entry's hash. This linkage is
+    what makes the ledger tamper-evident: altering any past row changes its
+    hash and breaks every hash after it."""
+    payload = "|".join([prev_hash, sent_by, sent_to, filename, content_hash, timestamp_iso])
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _append_ledger_entry(sent_by, sent_to, filename, file_extension, content_hash):
+    prev = TransferLedger.query.order_by(TransferLedger.id.desc()).first()
+    prev_hash = prev.entry_hash if prev else GENESIS_PREV_HASH
+    entry = TransferLedger(sent_by=sent_by, sent_to=sent_to, filename=filename,
+                           file_extension=file_extension, content_hash=content_hash,
+                           prev_hash=prev_hash)
+    db.session.add(entry)
+    db.session.flush()  # populate timestamp before hashing, without committing
+    entry.entry_hash = _compute_ledger_hash(prev_hash, sent_by, sent_to, filename,
+                                            content_hash, entry.timestamp.isoformat())
+    return entry
+
+
+def verify_ledger_chain():
+    """Walk the ledger oldest-first; return (ok, first_broken_id)."""
+    entries = TransferLedger.query.order_by(TransferLedger.id.asc()).all()
+    expected_prev = GENESIS_PREV_HASH
+    for entry in entries:
+        if entry.prev_hash != expected_prev:
+            return False, entry.id
+        recomputed = _compute_ledger_hash(entry.prev_hash, entry.sent_by, entry.sent_to,
+                                          entry.filename, entry.content_hash,
+                                          entry.timestamp.isoformat())
+        if recomputed != entry.entry_hash:
+            return False, entry.id
+        expected_prev = entry.entry_hash
+    return True, None
 
 
 def safe_storage_name(original_filename):
@@ -128,7 +167,7 @@ def dashboard():
     total_users = User.query.count()
     all_users = User.query.all()
     online_set = set(online_users)
-    all_files = Blockchain.query.all()
+    all_files = TransferLedger.query.all()
     total_files_shared = len(all_files)
     file_extensions = [entry.file_extension.lower() for entry in all_files if entry.file_extension]
     ext_counter = Counter(file_extensions)
@@ -177,8 +216,8 @@ def upload():
         try:
             db.session.add(File(filename=original_name, stored_name=stored_name,
                                 user_id=session['user_id'], shared_with_user_id=shared_user.id))
-            db.session.add(Blockchain(sent_by=session['username'], sent_to=shared_user.username,
-                                      filename=original_name, file_extension=ext, file_hash=file_hash))
+            _append_ledger_entry(sent_by=session['username'], sent_to=shared_user.username,
+                                 filename=original_name, file_extension=ext, content_hash=file_hash)
             db.session.commit()
         except Exception:
             db.session.rollback()
@@ -199,12 +238,14 @@ def shared_files():
     files = File.query.filter_by(shared_with_user_id=session['user_id']).order_by(File.upload_time.desc()).all()
     return render_template('shared_files.html', files=files)
 
-@app.route('/view_blockchain')
-def view_blockchain():
+@app.route('/ledger')
+def view_ledger():
     if 'username' not in session:
         return redirect(url_for('login'))
-    entries = Blockchain.query.order_by(Blockchain.timestamp.desc()).all()
-    return render_template('view_blockchain.html', blockchain=entries)
+    entries = TransferLedger.query.order_by(TransferLedger.timestamp.desc()).all()
+    chain_ok, broken_id = verify_ledger_chain()
+    return render_template('view_ledger.html', ledger=entries,
+                           chain_ok=chain_ok, broken_id=broken_id)
 
 @app.route('/uploaded')
 def uploaded_files():
